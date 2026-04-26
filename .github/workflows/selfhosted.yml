@@ -20,29 +20,6 @@ on:
           - 'LineageOS 20.0'
           - 'LineageOS 21.0'
           - 'LineageOS 22.1'
-          - 'ArrowOS 13.1'
-          - 'DerpFest 14.0'
-          - 'CipherOS 14'
-          - 'PixelOS 15'
-          - 'RisingOS 15 Revived'
-          - 'LineageOS 16.0'
-          - 'CyanogenMOD 14.1'
-          - 'AOSP'
-      BUILD_DIFFERENT_ROM:
-        description: "Command to initialize a different 'repo' project:"
-        required: false
-        default: "echo 'Build Starting!'"
-      REMOVALS:
-        description: "Folders to be removed before syncing:"
-        required: false
-      LOCAL_MANIFEST:
-        description: "Personal local manifest [repository or raw]:"
-        required: true
-        default: 'https://github.com/ansh-m14x/aosp_device_oppo_OP4C7D'
-      LOCAL_MANIFEST_BRANCH:
-        description: "Personal local manifest's branch:"
-        required: false
-        default: 'lineage-17.1'
       DEVICE_NAME:
         description: "Device's codename:"
         required: true
@@ -51,8 +28,16 @@ on:
         description: "Product to build:"
         required: true
         default: "lineage_OP4C7D"
+      LOCAL_MANIFEST:
+        description: "Personal local manifest [repository]:"
+        required: true
+        default: 'https://github.com/ansh-m14x/aosp_device_oppo_OP4C7D'
+      LOCAL_MANIFEST_BRANCH:
+        description: "Branch of local manifest:"
+        required: true
+        default: 'main'
       BUILD_COMMAND:
-        description: 'Command to be used for compiling:'
+        description: 'Command for compiling:'
         required: true
         default: 'mka bacon'
       BUILD_TYPE:
@@ -64,47 +49,13 @@ on:
         - 'eng'
         - 'userdebug'
         - 'user' 
-      CLEAN_BUILD:
-        description: 'Build with a clean workspace?'
-        required: true
-        default: 'no'
-        type: choice
-        options: 
-        - 'yes'
-        - 'no'
 
 jobs:
-  Start-Runner:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Set up environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y tmux
-    - name: Configure the 'crave' environment
-      run: |
-        if [[ $DCDEVSPACE != *1* ]]; then
-          mkdir ${HOME}/bin/
-          curl -s https://raw.githubusercontent.com/accupara/crave/master/get_crave.sh | bash -s --
-          mv ${PWD}/crave ${HOME}/bin/
-          sudo ln -sf /home/${USER}/bin/crave /usr/bin/crave
-          envsubst < ${PWD}/crave.conf.sample >> ${PWD}/crave.conf
-          rm -rf ${PWD}/crave.conf.sample          
-        fi
-      env:
-        CRAVE_USERNAME: ${{ secrets.CRAVE_USERNAME }}
-        CRAVE_TOKEN: ${{ secrets.CRAVE_TOKEN }}
-    - name: Run crave devspace
-      run: |
-        crave ${{ secrets.CRAVE_FLAGS }} devspace -- "if [ -f actions-runner/run.sh ] ; then tmux kill-session -t ghactions || true && tmux new-session -d -s ghactions './actions-runner/run.sh' && echo 'Runner Started'; else echo 'Error! Runner not found!'; exit 1; fi"
-
   prepare:
     name: Prepare for Building
     runs-on: ubuntu-latest
     steps:
-    - name: Check-out to repository
+    - name: Checkout code
       uses: actions/checkout@v4
     - name: Set Project variables
       id: proj-variables
@@ -115,36 +66,20 @@ jobs:
           export PROJECTID="81"
           export REPO_INIT="repo init -u https://github.com/LineageOS/android.git -b lineage-17.1 --git-lfs --depth=1"
         ;;
-        "LineageOS 21.0")
-          export PROJECTFOLDER="/crave-devspaces/Lineage21"
-          export PROJECTID="72"
-          export REPO_INIT="repo init -u https://github.com/LineageOS/android.git -b lineage-21.0 --git-lfs --depth=1"
-        ;;
         "LineageOS 18.1")
           export PROJECTFOLDER="/crave-devspaces/Lineage18"
           export PROJECTID="85"
           export REPO_INIT="repo init -u https://github.com/accupara/los18.1.git -b lineage-18.1 --git-lfs --depth=1"
         ;;
-        "AOSP")
-          export PROJECTFOLDER="/crave-devspaces/AOSP"
-          export PROJECTID="35"
-          export REPO_INIT="repo init -u https://android.googlesource.com/platform/manifest.git -b master --git-lfs --depth=1"
-        ;;
         *)
-          # Default case for other ROMs from your original list
-          export PROJECTFOLDER="/crave-devspaces/Misc"
-          export PROJECTID="35"
-          export REPO_INIT="echo 'Using Custom Init'"
+          export PROJECTFOLDER="/crave-devspaces/Lineage21"
+          export PROJECTID="72"
+          export REPO_INIT="repo init -u https://github.com/LineageOS/android.git -b lineage-21.0 --git-lfs --depth=1"
         ;;
         esac
 
         LUNCH="breakfast ${{ github.event.inputs.PRODUCT_NAME }} ${{ github.event.inputs.BUILD_TYPE }}"
-        
-        if [[ "${{ github.event.inputs.LOCAL_MANIFEST }}" =~ \.xml(/)?$ ]]; then
-          LOCAL_MANIFEST="mkdir -p .repo/local_manifests && curl -o .repo/local_manifests/local_manifest.xml ${{ github.event.inputs.LOCAL_MANIFEST }}"
-        else
-          LOCAL_MANIFEST="git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests"
-        fi
+        LOCAL_MANIFEST="git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests"
 
         echo "PROJECTFOLDER=$PROJECTFOLDER" >> "$GITHUB_OUTPUT"
         echo "PROJECTID=$PROJECTID"  >> "$GITHUB_OUTPUT"
@@ -164,16 +99,24 @@ jobs:
     needs: prepare
     runs-on: self-hosted
     steps:
-    - name: Cleanup & Setup
+    - name: Cleanup & Build Setup
       run: |
+        # 1. Workspace clean karo lekin config create karo
         rm -rf *
+        
+        # 2. Crave Config Fix (Isse "Project root/url" error nahi aayega)
+        echo "os: android" > crave.conf
+        echo "project: ${{ needs.prepare.outputs.PROJECTFOLDER }}" >> crave.conf
+        
+        # 3. Variables set karo
         PROJECTFOLDER="${{ needs.prepare.outputs.PROJECTFOLDER }}"
         PROJECTID="${{ needs.prepare.outputs.PROJECTID }}"
         REPO_INIT="${{ needs.prepare.outputs.REPO_INIT }}"
         LUNCH="${{ needs.prepare.outputs.LUNCH }}"
         LOCAL_MANIFEST="${{ needs.prepare.outputs.LOCAL_MANIFEST }}"
         
-        crave run --no-patch -- "rm -rf .repo/local_manifests/ ${{ github.event.inputs.REMOVALS }} && \
+        # 4. Crave Build Trigger
+        crave run --no-patch -- "rm -rf .repo/local_manifests/ && \
         $REPO_INIT ; \
         $LOCAL_MANIFEST && \
         /opt/crave/resync.sh && \
@@ -181,4 +124,3 @@ jobs:
         $LUNCH && \
         make installclean && \
         ${{ github.event.inputs.BUILD_COMMAND }}"
-
