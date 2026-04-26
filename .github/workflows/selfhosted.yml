@@ -1,10 +1,3 @@
-#
-# Copyright (C) 2024-2025 Antonino Scordino
-# Copyright (C) 2024-2025 Souhrud Reddy
-#
-# SPDX-License-Identifier: Apache-2.0
-#
-
 name: Crave Builder(self-hosted)
 on:
   workflow_dispatch:
@@ -16,10 +9,6 @@ on:
         type: choice
         options:
           - 'LineageOS 17.1'
-          - 'LineageOS 18.1'
-          - 'LineageOS 20.0'
-          - 'LineageOS 21.0'
-          - 'LineageOS 22.1'
       DEVICE_NAME:
         description: "Device's codename:"
         required: true
@@ -40,87 +29,45 @@ on:
         description: 'Command for compiling:'
         required: true
         default: 'mka bacon'
-      BUILD_TYPE:
-        description: 'Type of build:'
-        required: true
-        default: 'userdebug'
-        type: choice
-        options: 
-        - 'eng'
-        - 'userdebug'
-        - 'user' 
 
 jobs:
   prepare:
-    name: Prepare for Building
     runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Set Project variables
-      id: proj-variables
-      run: |
-        case "${{ github.event.inputs.BASE_PROJECT }}" in
-        "LineageOS 17.1")
-          export PROJECTFOLDER="/crave-devspaces/Lineage17"
-          export PROJECTID="81"
-          export REPO_INIT="repo init -u https://github.com/LineageOS/android.git -b lineage-17.1 --git-lfs --depth=1"
-        ;;
-        "LineageOS 18.1")
-          export PROJECTFOLDER="/crave-devspaces/Lineage18"
-          export PROJECTID="85"
-          export REPO_INIT="repo init -u https://github.com/accupara/los18.1.git -b lineage-18.1 --git-lfs --depth=1"
-        ;;
-        *)
-          export PROJECTFOLDER="/crave-devspaces/Lineage21"
-          export PROJECTID="72"
-          export REPO_INIT="repo init -u https://github.com/LineageOS/android.git -b lineage-21.0 --git-lfs --depth=1"
-        ;;
-        esac
-
-        LUNCH="breakfast ${{ github.event.inputs.PRODUCT_NAME }} ${{ github.event.inputs.BUILD_TYPE }}"
-        LOCAL_MANIFEST="git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests"
-
-        echo "PROJECTFOLDER=$PROJECTFOLDER" >> "$GITHUB_OUTPUT"
-        echo "PROJECTID=$PROJECTID"  >> "$GITHUB_OUTPUT"
-        echo "REPO_INIT=$REPO_INIT" >> "$GITHUB_OUTPUT"
-        echo "LUNCH=$LUNCH" >> "$GITHUB_OUTPUT"
-        echo "LOCAL_MANIFEST=$LOCAL_MANIFEST" >> "$GITHUB_OUTPUT"
     outputs:
-      PROJECTFOLDER: ${{ steps.proj-variables.outputs.PROJECTFOLDER }}
-      PROJECTID: ${{ steps.proj-variables.outputs.PROJECTID }}
-      REPO_INIT: ${{ steps.proj-variables.outputs.REPO_INIT }}
-      LUNCH: ${{ steps.proj-variables.outputs.LUNCH }}
-      LOCAL_MANIFEST: ${{ steps.proj-variables.outputs.LOCAL_MANIFEST }}
+      PROJECTFOLDER: ${{ steps.vars.outputs.PROJECTFOLDER }}
+      REPO_INIT: ${{ steps.vars.outputs.REPO_INIT }}
+      LOCAL_MANIFEST: ${{ steps.vars.outputs.LOCAL_MANIFEST }}
+      LUNCH: ${{ steps.vars.outputs.LUNCH }}
+    steps:
+    - id: vars
+      run: |
+        echo "PROJECTFOLDER=/crave-devspaces/Lineage17" >> "$GITHUB_OUTPUT"
+        echo "REPO_INIT=repo init -u https://github.com/LineageOS/android.git -b lineage-17.1 --git-lfs --depth=1" >> "$GITHUB_OUTPUT"
+        echo "LOCAL_MANIFEST=git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests" >> "$GITHUB_OUTPUT"
+        echo "LUNCH=breakfast ${{ github.event.inputs.PRODUCT_NAME }} userdebug" >> "$GITHUB_OUTPUT"
 
   build:
-    timeout-minutes: 1440
-    name: Build using foss.crave.io
     needs: prepare
     runs-on: self-hosted
     steps:
-    - name: Cleanup & Build Setup
+    - name: Build Execution
       run: |
-        # 1. Workspace clean karo lekin config create karo
+        # 1. Purana kachra saaf karo
         rm -rf *
         
-        # 2. Crave Config Fix (Isse "Project root/url" error nahi aayega)
-        echo "os: android" > crave.conf
-        echo "project: ${{ needs.prepare.outputs.PROJECTFOLDER }}" >> crave.conf
+        # 2. Crave configuration file manually banao
+        cat <<EOF > crave.conf
+        os: "android"
+        project: "${{ needs.prepare.outputs.PROJECTFOLDER }}"
+        EOF
         
-        # 3. Variables set karo
-        PROJECTFOLDER="${{ needs.prepare.outputs.PROJECTFOLDER }}"
-        PROJECTID="${{ needs.prepare.outputs.PROJECTID }}"
-        REPO_INIT="${{ needs.prepare.outputs.REPO_INIT }}"
-        LUNCH="${{ needs.prepare.outputs.LUNCH }}"
-        LOCAL_MANIFEST="${{ needs.prepare.outputs.LOCAL_MANIFEST }}"
-        
-        # 4. Crave Build Trigger
-        crave run --no-patch -- "rm -rf .repo/local_manifests/ && \
-        $REPO_INIT ; \
-        $LOCAL_MANIFEST && \
-        /opt/crave/resync.sh && \
-        source build/envsetup.sh && \
-        $LUNCH && \
-        make installclean && \
-        ${{ github.event.inputs.BUILD_COMMAND }}"
+        # 3. Crave run command - bina git init ke configuration file use karke
+        crave run --config crave.conf --no-patch -- "
+          rm -rf .repo/local_manifests/ ; \
+          ${{ needs.prepare.outputs.REPO_INIT }} ; \
+          ${{ needs.prepare.outputs.LOCAL_MANIFEST }} ; \
+          /opt/crave/resync.sh ; \
+          source build/envsetup.sh ; \
+          ${{ needs.prepare.outputs.LUNCH }} ; \
+          ${{ github.event.inputs.BUILD_COMMAND }}
+        "
