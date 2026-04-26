@@ -32,42 +32,51 @@ on:
 
 jobs:
   prepare:
+    name: Prepare for Building
     runs-on: ubuntu-latest
     outputs:
-      PROJECTFOLDER: ${{ steps.vars.outputs.PROJECTFOLDER }}
-      REPO_INIT: ${{ steps.vars.outputs.REPO_INIT }}
-      LOCAL_MANIFEST: ${{ steps.vars.outputs.LOCAL_MANIFEST }}
-      LUNCH: ${{ steps.vars.outputs.LUNCH }}
+      PROJECTFOLDER: ${{ steps.proj-vars.outputs.PROJECTFOLDER }}
+      REPO_INIT: ${{ steps.proj-vars.outputs.REPO_INIT }}
+      LUNCH: ${{ steps.proj-vars.outputs.LUNCH }}
+      LOCAL_MANIFEST: ${{ steps.proj-vars.outputs.LOCAL_MANIFEST }}
     steps:
-    - id: vars
+    - name: Set Project variables
+      id: proj-vars
       run: |
+        # LineageOS 17.1 for Oppo A31
         echo "PROJECTFOLDER=/crave-devspaces/Lineage17" >> "$GITHUB_OUTPUT"
         echo "REPO_INIT=repo init -u https://github.com/LineageOS/android.git -b lineage-17.1 --git-lfs --depth=1" >> "$GITHUB_OUTPUT"
-        echo "LOCAL_MANIFEST=git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests" >> "$GITHUB_OUTPUT"
         echo "LUNCH=breakfast ${{ github.event.inputs.PRODUCT_NAME }} userdebug" >> "$GITHUB_OUTPUT"
+        echo "LOCAL_MANIFEST=git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests" >> "$GITHUB_OUTPUT"
 
   build:
+    timeout-minutes: 1440
+    name: Build using foss.crave.io
     needs: prepare
     runs-on: self-hosted
     steps:
-    - name: Build Execution
+    - name: Cleanup & Build Execution
       run: |
-        # 1. Purana kachra saaf karo
+        # 1. Purana data saaf karo
         rm -rf *
         
-        # 2. Crave configuration file manually banao
-        cat <<EOF > crave.conf
-        os: "android"
-        project: "${{ needs.prepare.outputs.PROJECTFOLDER }}"
-        EOF
+        # 2. Crave Config Fix: Echo use karke file banao taaki parsing error na aaye
+        echo "os: android" > crave.conf
+        echo "project: ${{ needs.prepare.outputs.PROJECTFOLDER }}" >> crave.conf
         
-        # 3. Crave run command - bina git init ke configuration file use karke
-        crave run --config crave.conf --no-patch -- "
+        # 3. Verify karo ki config sahi bani hai (Logs mein dikhega)
+        echo "--- crave.conf content ---"
+        cat crave.conf
+        echo "--------------------------"
+        
+        # 4. Crave run command - explicit config path ke saath
+        crave run --config $(pwd)/crave.conf --no-patch -- "
           rm -rf .repo/local_manifests/ ; \
           ${{ needs.prepare.outputs.REPO_INIT }} ; \
           ${{ needs.prepare.outputs.LOCAL_MANIFEST }} ; \
           /opt/crave/resync.sh ; \
           source build/envsetup.sh ; \
           ${{ needs.prepare.outputs.LUNCH }} ; \
+          make installclean ; \
           ${{ github.event.inputs.BUILD_COMMAND }}
         "
