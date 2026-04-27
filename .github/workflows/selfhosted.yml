@@ -27,6 +27,14 @@ on:
         description: "Branch of local manifest:"
         required: true
         default: 'main'
+      VENDOR_MANIFEST:
+        description: "Vendor tree repository:"
+        required: true
+        default: 'https://github.com/ansh-m14x/device_oppo_OP4BFB-prebuilt'
+      VENDOR_BRANCH:
+        description: "Branch of vendor tree:"
+        required: true
+        default: 'lineage-17.1'
       BUILD_COMMAND:
         description: 'Command for compiling:'
         required: true
@@ -41,6 +49,7 @@ jobs:
       PROJECTID: ${{ steps.proj-vars.outputs.PROJECTID }}
       REPO_INIT: ${{ steps.proj-vars.outputs.REPO_INIT }}
       LUNCH: ${{ steps.proj-vars.outputs.LUNCH }}
+      # Yahan device aur vendor dono clone honge
       LOCAL_MANIFEST: ${{ steps.proj-vars.outputs.LOCAL_MANIFEST }}
     steps:
     - name: Set Project variables
@@ -59,7 +68,9 @@ jobs:
           ;;
         esac
         echo "LUNCH=breakfast ${{ github.event.inputs.PRODUCT_NAME }} userdebug" >> "$GITHUB_OUTPUT"
-        echo "LOCAL_MANIFEST=git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests" >> "$GITHUB_OUTPUT"
+        
+        # Device Tree aur Vendor Tree dono ko manifest folder mein alag alag path par clone karne ka logic
+        echo "LOCAL_MANIFEST=git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests/device/oppo/OP4C7D && git clone ${{ github.event.inputs.VENDOR_MANIFEST }} --depth 1 -b ${{ github.event.inputs.VENDOR_BRANCH }} .repo/local_manifests/vendor/oppo/OP4C7D" >> "$GITHUB_OUTPUT"
 
   build:
     timeout-minutes: 1440
@@ -70,11 +81,9 @@ jobs:
     - name: Cleanup & Devspace Setup
       run: |
         rm -rf *
-        # Crave variables pass karna
         export CRAVE_PROJECT="${{ needs.prepare.outputs.PROJECTFOLDER }}"
         export CRAVE_OS="android"
         
-        # Crave clone handle karna (Yahi logic aapke script mein hai)
         if grep -q "$CRAVE_PROJECT" <(crave clone list --json | jq -r '.clones[]."Cloned At"'); then
           crave clone destroy -y $CRAVE_PROJECT || echo "Cleanup failed"
         fi
@@ -83,12 +92,12 @@ jobs:
     - name: Build Execution
       run: |
         cd ${{ needs.prepare.outputs.PROJECTFOLDER }}
-        # Config parsing error se bachne ke liye direct export
         export CRAVE_OS="android"
         export CRAVE_PROJECT="${{ needs.prepare.outputs.PROJECTFOLDER }}"
 
         crave run --no-patch -- "
           rm -rf .repo/local_manifests/ ; \
+          mkdir -p .repo/local_manifests ; \
           ${{ needs.prepare.outputs.REPO_INIT }} ; \
           ${{ needs.prepare.outputs.LOCAL_MANIFEST }} ; \
           /opt/crave/resync.sh ; \
@@ -97,4 +106,3 @@ jobs:
           make installclean && \
           ${{ github.event.inputs.BUILD_COMMAND }}
         "
-
