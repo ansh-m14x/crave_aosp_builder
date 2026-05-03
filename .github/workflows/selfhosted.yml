@@ -1,108 +1,53 @@
-name: Crave Builder(self-hosted)
+name: Crave Builder (Recovery-A31)
 on:
   workflow_dispatch:
     inputs:
-      BASE_PROJECT:
-        description: 'Choose a base project:'
-        required: true
-        default: 'LineageOS 17.1'
-        type: choice
-        options:
-          - 'LineageOS 17.1'
-          - 'LineageOS 18.1'
-          - 'LineageOS 21.0'
       DEVICE_NAME:
         description: "Device's codename:"
         required: true
         default: "OP4C7D"
-      PRODUCT_NAME:
-        description: "Product to build:"
+      DEVICE_TREE:
+        description: "Device tree repository:"
         required: true
-        default: "lineage_OP4C7D"
-      LOCAL_MANIFEST:
-        description: "Personal local manifest [repository]:"
-        required: true
-        default: 'https://github.com/ansh-m14x/aosp_device_oppo_OP4C7D'
-      LOCAL_MANIFEST_BRANCH:
-        description: "Branch of local manifest:"
+        default: 'https://github.com/ansh-m14x/android-recovery-OP4C7D'
+      DEVICE_BRANCH:
+        description: "Branch of device tree:"
         required: true
         default: 'main'
-      VENDOR_MANIFEST:
-        description: "Vendor tree repository:"
-        required: true
-        default: 'https://github.com/ansh-m14x/device_oppo_OP4BFB-prebuilt'
-      VENDOR_BRANCH:
-        description: "Branch of vendor tree:"
-        required: true
-        default: 'lineage-17.1'
       BUILD_COMMAND:
         description: 'Command for compiling:'
         required: true
-        default: 'mka bacon'
+        default: 'mka recoveryimage'
 
 jobs:
-  prepare:
-    name: Prepare for Building
-    runs-on: ubuntu-latest
-    outputs:
-      PROJECTFOLDER: ${{ steps.proj-vars.outputs.PROJECTFOLDER }}
-      PROJECTID: ${{ steps.proj-vars.outputs.PROJECTID }}
-      REPO_INIT: ${{ steps.proj-vars.outputs.REPO_INIT }}
-      LUNCH: ${{ steps.proj-vars.outputs.LUNCH }}
-      # Yahan device aur vendor dono clone honge
-      LOCAL_MANIFEST: ${{ steps.proj-vars.outputs.LOCAL_MANIFEST }}
-    steps:
-    - name: Set Project variables
-      id: proj-vars
-      run: |
-        case "${{ github.event.inputs.BASE_PROJECT }}" in
-          "LineageOS 17.1")
-            echo "PROJECTFOLDER=/crave-devspaces/Lineage17" >> "$GITHUB_OUTPUT"
-            echo "PROJECTID=81" >> "$GITHUB_OUTPUT"
-            echo "REPO_INIT=repo init -u https://github.com/LineageOS/android.git -b lineage-17.1 --git-lfs --depth=1" >> "$GITHUB_OUTPUT"
-          ;;
-          *)
-            echo "PROJECTFOLDER=/crave-devspaces/Lineage21" >> "$GITHUB_OUTPUT"
-            echo "PROJECTID=72" >> "$GITHUB_OUTPUT"
-            echo "REPO_INIT=repo init -u https://github.com/LineageOS/android.git -b lineage-21.0 --git-lfs --depth=1" >> "$GITHUB_OUTPUT"
-          ;;
-        esac
-        echo "LUNCH=breakfast ${{ github.event.inputs.PRODUCT_NAME }} userdebug" >> "$GITHUB_OUTPUT"
-        
-        # Device Tree aur Vendor Tree dono ko manifest folder mein alag alag path par clone karne ka logic
-        echo "LOCAL_MANIFEST=git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests/device/oppo/OP4C7D && git clone ${{ github.event.inputs.VENDOR_MANIFEST }} --depth 1 -b ${{ github.event.inputs.VENDOR_BRANCH }} .repo/local_manifests/vendor/oppo/OP4C7D" >> "$GITHUB_OUTPUT"
-
   build:
     timeout-minutes: 1440
-    name: Build on foss.crave.io
-    needs: prepare
+    name: Build Recovery on Crave
     runs-on: self-hosted
     steps:
-    - name: Cleanup & Devspace Setup
-      run: |
-        rm -rf *
-        export CRAVE_PROJECT="${{ needs.prepare.outputs.PROJECTFOLDER }}"
-        export CRAVE_OS="android"
-        
-        if grep -q "$CRAVE_PROJECT" <(crave clone list --json | jq -r '.clones[]."Cloned At"'); then
-          crave clone destroy -y $CRAVE_PROJECT || echo "Cleanup failed"
-        fi
-        crave clone create --projectID ${{ needs.prepare.outputs.PROJECTID }} $CRAVE_PROJECT || echo "Clone failed, continuing..."
-
     - name: Build Execution
       run: |
-        cd ${{ needs.prepare.outputs.PROJECTFOLDER }}
+        # Using a stable base project folder on Crave
+        export CRAVE_PROJECT="/crave-devspaces/twrp-11"
         export CRAVE_OS="android"
-        export CRAVE_PROJECT="${{ needs.prepare.outputs.PROJECTFOLDER }}"
 
         crave run --no-patch -- "
+          # 1. Clean up and setup workspace
           rm -rf .repo/local_manifests/ ; \
-          mkdir -p .repo/local_manifests ; \
-          ${{ needs.prepare.outputs.REPO_INIT }} ; \
-          ${{ needs.prepare.outputs.LOCAL_MANIFEST }} ; \
+          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp -b twrp-11 --depth=1 ; \
+          
+          # 2. Clone your device tree into the correct path
+          mkdir -p device/oppo/OP4C7D ; \
+          git clone ${{ github.event.inputs.DEVICE_TREE }} -b ${{ github.event.inputs.DEVICE_BRANCH }} device/oppo/OP4C7D ; \
+          
+          # 3. Resync
           /opt/crave/resync.sh ; \
+          
+          # 4. Build logic
           source build/envsetup.sh && \
-          ${{ needs.prepare.outputs.LUNCH }} && \
-          make installclean && \
-          ${{ github.event.inputs.BUILD_COMMAND }}
+          export ALLOW_MISSING_DEPENDENCIES=true && \
+          export LC_ALL=C && \
+          lunch omni_OP4C7D-eng && \
+          make clean && \
+          ${{ github.event.inputs.BUILD_COMMAND }} -j$(nproc --all)
         "
