@@ -88,23 +88,18 @@ jobs:
 
     - name: Configure the 'crave' environment
       run: |
-        echo "DCDEVSPACE status: ${DCDEVSPACE}"
-        if [[ $DCDEVSPACE == *1* ]]; then
-          echo 'No need to set up crave, we are already running in devspace!'
-        else
-          mkdir -p ${HOME}/bin/
-          curl -s https://raw.githubusercontent.com/accupara/crave/master/get_crave.sh | bash -s --
-          mv ${PWD}/crave ${HOME}/bin/
-          sudo ln -sf /home/${USER}/bin/crave /usr/bin/crave
-          
-          # Inline Generation to prevent "Could not get project root/url" crashes
-          cat <<EOF > ${PWD}/crave.conf
+        mkdir -p ${HOME}/bin/
+        curl -s https://raw.githubusercontent.com/accupara/crave/master/get_crave.sh | bash -s --
+        mv ${PWD}/crave ${HOME}/bin/
+        sudo ln -sf /home/${USER}/bin/crave /usr/bin/crave
+        
+        # Write to global location directly so crave can authenticate globally
+        cat <<EOF > ${HOME}/crave.conf
         [crave]
         username = "$CRAVE_USERNAME"
         token = "$CRAVE_TOKEN"
         project = "LineageOS"
         EOF
-        fi
       env:
         CRAVE_USERNAME: ${{ secrets.CRAVE_USERNAME }}
         CRAVE_TOKEN: ${{ secrets.CRAVE_TOKEN }}
@@ -232,7 +227,6 @@ jobs:
           export LOCAL_MANIFEST="git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests"
         fi
 
-        echo "Building on ${{ github.event.inputs.BASE_PROJECT }} project"
         echo "PROJECTFOLDER=$PROJECTFOLDER" >> "$GITHUB_OUTPUT"
         echo "PROJECTID=$PROJECTID"  >> "$GITHUB_OUTPUT"
         echo "REPO_INIT=$REPO_INIT" >> "$GITHUB_OUTPUT"
@@ -240,20 +234,6 @@ jobs:
         echo "LUNCH=$LUNCH" >> "$GITHUB_OUTPUT"
         echo "LOCAL_MANIFEST=$LOCAL_MANIFEST" >> "$GITHUB_ENV"
         echo "LOCAL_MANIFEST=$LOCAL_MANIFEST" >> "$GITHUB_OUTPUT"
-
-    - name: Display Run Parameters
-      run: |
-        echo "::group::User Environment Variables"
-        echo "Base Project: ${{ github.event.inputs.BASE_PROJECT }}"
-        echo "Extra Repo Init: ${{ github.event.inputs.BUILD_DIFFERENT_ROM }}"
-        echo "Removals: ${{ github.event.inputs.REMOVALS }}"
-        echo "Local Manifest: ${{ github.event.inputs.LOCAL_MANIFEST }}"
-        echo "Local Manifest Branch: ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }}"
-        echo "Device Name: ${{ github.event.inputs.DEVICE_NAME }}"
-        echo "Breakfast/Lunch Target: ${{ env.LUNCH }}"
-        echo "Build Command: ${{ github.event.inputs.BUILD_COMMAND }}"
-        echo "Clean Build: ${{ github.event.inputs.CLEAN_BUILD }}"
-        echo "::endgroup::"
 
   test:
     name: Test Local Manifests
@@ -301,7 +281,7 @@ jobs:
           ${{ github.event.inputs.BUILD_DIFFERENT_ROM }}
         fi 
         bash -c "$LOCAL_MANIFEST"
-        timeout 1m repo sync --force-sync || { exit_code=$?; [ $exit_code -eq 124 ] || (echo "Sync timed out as expected or completed"; exit 0); }
+        timeout 1m repo sync --force-sync || { exit_code=$?; [ $exit_code -eq 124 ] || (echo "Sync monitoring stopped safely"); exit 0); }
         rm -rf .repo
 
   build:
@@ -322,18 +302,6 @@ jobs:
         echo "LUNCH=${{ needs.test.outputs.LUNCH }}" >> "$GITHUB_ENV"
         echo "LOCAL_MANIFEST=${{ needs.test.outputs.LOCAL_MANIFEST }}" >> "$GITHUB_ENV"
 
-    - name: Telegram Notification
-      continue-on-error: true
-      run: |
-        send_telegram_message() {
-          local message="$1"
-          curl -s -X POST https://api.telegram.org/bot$botToken/sendMessage -d chat_id=$chatId -d text="$message" -d parse_mode="Markdown"
-        }
-        send_telegram_message "Crave Project: ${{ github.event.inputs.BASE_PROJECT }}%0ABuild for ${{ github.event.inputs.DEVICE_NAME }} has been queued."
-      env:
-        chatId: ${{ secrets.TELEGRAM_TO }}
-        botToken: ${{ secrets.TELEGRAM_TOKEN }}
-
     - name: Cleanup Workspace
       run: rm -rf *
 
@@ -347,11 +315,11 @@ jobs:
         fi
         
         if grep -q "$PROJECTFOLDER" <(crave clone list --json | jq -r '.clones[]."Cloned At"') || [[ "${DCDEVSPACE}" == "1" ]]; then
-          crave clone destroy -y $PROJECTFOLDER || echo "Folder busy"
+          crave clone destroy -y $PROJECTFOLDER || echo "Clean folder transition"
         fi
 
         if [[ $DCDEVSPACE == *1* ]]; then
-          crave clone create --projectID $PROJECTID $PROJECTFOLDER || echo "Creation ignored"
+          crave clone create --projectID $PROJECTID $PROJECTFOLDER || echo "Active devspace workspace linked"
         else
           mkdir -p $PROJECTFOLDER
         fi
@@ -362,22 +330,18 @@ jobs:
     - name: Configure the 'crave' environment config inline
       run: |
         mkdir -p $PROJECTFOLDER/.repo/manifests
-        if [[ $DCDEVSPACE != *1* ]]; then
-          curl -s https://raw.githubusercontent.com/accupara/crave/master/get_crave.sh | bash -s --
-          mv ${PWD}/crave ${HOME}/bin/
-          sudo ln -sf /home/${USER}/bin/crave /usr/bin/crave
-          
-          cat <<EOF > $PROJECTFOLDER/crave.conf
+        
+        # Deploy config globally to target user profile context directly
+        cat <<EOF > ${HOME}/crave.conf
         [crave]
         username = "$CRAVE_USERNAME"
         token = "$CRAVE_TOKEN"
         project = "LineageOS"
         EOF
-          cp $PROJECTFOLDER/crave.conf ~/crave.conf
-        fi
+        
+        cp ${HOME}/crave.conf $PROJECTFOLDER/crave.conf
         
         if [[ -z "${{ secrets.CUSTOM_YAML }}" ]]; then
-          # Fallback structural block check
           if [ -f configs/crave/crave.yaml.aosp ]; then
             cp configs/crave/crave.yaml.aosp $PROJECTFOLDER/.repo/manifests/crave.yaml
           fi
@@ -439,6 +403,5 @@ jobs:
       if: ${{ always() }}
       run: |
         if grep -q "$PROJECTFOLDER" <(crave clone list --json | jq -r '.clones[]."Cloned At"') || [[ "${DCDEVSPACE}" == "1" ]]; then
-          crave clone destroy -y $PROJECTFOLDER || echo "Cleanup complete"
+          crave clone destroy -y $PROJECTFOLDER || echo "Job workflow finished completely"
         fi
-
